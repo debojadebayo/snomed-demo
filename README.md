@@ -8,13 +8,10 @@ A single-file visual demo contrasting three SNOMED CT concept lookup approaches:
 
 Toggle the left panel between the terminology server and the B-tree mode; the right panel always shows the compiled minimal perfect hash function.
 
-## Run it
+## Deployed on 
 
-Open `index.html` in any browser. No build step, no server, no dependencies (single CDN font).
+https://debojadebayo.github.io/snomed-demo/
 
-## Deploy
-
-Static hosting only — GitHub Pages, Cloudflare Pages, Netlify, etc.
 
 ## Author
 
