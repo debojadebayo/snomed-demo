@@ -1,0 +1,842 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1280" />
+  <title>SNOMED CT // Lookup Benchmark</title>
+  <meta name="description" content="A visceral side-by-side of in-memory B-tree traversal vs. compiled perfect-hash SNOMED CT lookup." />
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg:         #0b0d12;
+      --surface:    #111520;
+      --surface-2:  #161b2a;
+      --border:     #1c2333;
+      --border-2:   #232c43;
+      --text:       #d4d8e0;
+      --muted:      #4a5568;
+      --muted-2:    #6b7689;
+      --amber:      #f5a524;
+      --amber-dim:  #7a5012;
+      --amber-bar:  #c47d10;
+      --amber-bg:   rgba(245, 165, 36, 0.08);
+      --mint:       #16d098;
+      --mint-dim:   #0a4535;
+      --mint-bg:    rgba(22, 208, 152, 0.06);
+      --white:      #f0f2f5;
+    }
+
+    *,
+    *::before,
+    *::after { box-sizing: border-box; }
+
+    html, body { margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'JetBrains Mono', 'Courier New', ui-monospace, monospace;
+      font-size: 14px;
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      padding: 24px;
+      gap: 20px;
+      -webkit-font-smoothing: antialiased;
+      text-rendering: geometricPrecision;
+    }
+
+    /* ------------------------------ header ------------------------------ */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+      gap: 24px;
+      flex-wrap: wrap;
+    }
+
+    .title {
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      color: var(--white);
+      font-size: 15px;
+    }
+    .title .slash { color: var(--muted-2); margin: 0 6px; }
+    .title .sub { color: var(--muted-2); font-weight: 400; }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    select#concept-select {
+      appearance: none;
+      -webkit-appearance: none;
+      background: var(--surface);
+      border: 1px solid var(--border-2);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      padding: 8px 32px 8px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+      background-image:
+        linear-gradient(45deg, transparent 50%, var(--muted-2) 50%),
+        linear-gradient(135deg, var(--muted-2) 50%, transparent 50%);
+      background-position: calc(100% - 14px) center, calc(100% - 9px) center;
+      background-size: 5px 5px, 5px 5px;
+      background-repeat: no-repeat;
+      min-width: 280px;
+    }
+    select#concept-select:focus {
+      outline: none;
+      border-color: var(--amber);
+    }
+
+    button#run-btn {
+      background: transparent;
+      border: 1px solid var(--amber);
+      color: var(--amber);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      padding: 8px 18px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background 120ms ease, color 120ms ease;
+    }
+    button#run-btn:hover:not(:disabled) {
+      background: var(--amber-bg);
+    }
+    button#run-btn:disabled {
+      border-color: var(--border-2);
+      color: var(--muted);
+      cursor: not-allowed;
+    }
+
+    /* ------------------------------ panels ------------------------------ */
+    main.panels {
+      flex: 1;
+      display: flex;
+      align-items: stretch;
+      gap: 0;
+      min-height: 540px;
+    }
+
+    .panel {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      min-width: 0;
+    }
+    .panel-left  { border-right: none; }
+    .panel-right { border-left: none; }
+
+    .panel-label {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--muted-2);
+      padding-bottom: 14px;
+      border-bottom: 1px dashed var(--border-2);
+      flex-wrap: wrap;
+    }
+    .panel-label .tag {
+      font-size: 10px;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      text-transform: none;
+      padding: 2px 8px;
+      border: 1px solid var(--border-2);
+      border-radius: 999px;
+    }
+    .panel-left  .panel-label > span:first-child { color: var(--amber); }
+    .panel-right .panel-label > span:first-child { color: var(--mint); }
+
+    /* ----------------------------- divider ----------------------------- */
+    .divider {
+      width: 1px;
+      background: var(--border);
+      position: relative;
+      flex-shrink: 0;
+    }
+    .ratio-badge {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%) scale(0.92);
+      background: var(--bg);
+      border: 1px solid var(--border-2);
+      border-radius: 6px;
+      padding: 16px 22px;
+      text-align: center;
+      white-space: nowrap;
+      color: var(--white);
+      font-weight: 700;
+      font-size: 22px;
+      letter-spacing: 0.02em;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 320ms ease, transform 320ms cubic-bezier(0.2, 0.7, 0.2, 1.2);
+      z-index: 5;
+    }
+    .ratio-badge.visible {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+    .ratio-badge .ratio-sub {
+      display: block;
+      font-size: 11px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: var(--muted-2);
+      font-weight: 500;
+      margin-top: 4px;
+    }
+
+    /* --------------------------- left panel ---------------------------- */
+    .btree-context {
+      background: #07090e;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 10px 12px;
+      color: var(--muted-2);
+      font-size: 12px;
+      min-height: 66px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 4px;
+      opacity: 0;
+      transition: opacity 200ms ease;
+    }
+    .btree-context.visible { opacity: 1; }
+    .btree-context .lead { color: var(--amber); font-weight: 600; }
+    .btree-context .sub { color: var(--text); }
+
+    .btree-canvas {
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: #0b0f18;
+      padding: 12px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .tree-level {
+      display: flex;
+      justify-content: center;
+      gap: 10px;
+    }
+    .tree-node {
+      border: 1px solid var(--border-2);
+      border-radius: 4px;
+      color: var(--muted-2);
+      background: rgba(122, 80, 18, 0.08);
+      min-width: 92px;
+      padding: 6px 8px;
+      font-size: 11px;
+      text-align: center;
+      transition: border-color 120ms ease, color 120ms ease, background 120ms ease, box-shadow 140ms ease;
+    }
+    .tree-node.root { min-width: 130px; }
+    .tree-node.small { min-width: 72px; font-size: 10px; }
+    .tree-node.active {
+      border-color: var(--amber);
+      color: var(--amber);
+      background: var(--amber-bg);
+      box-shadow: 0 0 0 1px rgba(245, 165, 36, 0.2), 0 0 20px rgba(245, 165, 36, 0.18);
+    }
+    .tree-node.done {
+      border-color: rgba(245, 165, 36, 0.35);
+      color: var(--text);
+      background: rgba(245, 165, 36, 0.05);
+    }
+
+    .traversal {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 4px 0;
+    }
+
+    .traversal-row {
+      display: grid;
+      grid-template-columns: 160px 1fr 64px;
+      align-items: center;
+      gap: 12px;
+      padding: 4px 0;
+    }
+    .traversal-row .step-label {
+      text-align: right;
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+      transition: color 120ms ease;
+    }
+    .traversal-row .decision {
+      position: relative;
+      height: 18px;
+      border-radius: 2px;
+      background: rgba(122, 80, 18, 0.18);
+      color: var(--muted-2);
+      font-size: 11px;
+      display: flex;
+      align-items: center;
+      padding: 0 8px;
+      border: 1px solid transparent;
+      transition: border-color 120ms ease, color 120ms ease;
+    }
+    .traversal-row .step-time {
+      font-size: 11px;
+      color: var(--muted);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      transition: color 120ms ease;
+    }
+    .traversal-row.active .step-label,
+    .traversal-row.done   .step-label { color: var(--amber); }
+    .traversal-row.active .decision,
+    .traversal-row.done   .decision { border-color: rgba(245, 165, 36, 0.25); }
+    .traversal-row.active .decision { color: var(--amber); }
+    .traversal-row.active .step-time,
+    .traversal-row.done   .step-time { color: var(--text); }
+
+    .result-row {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+      padding: 10px 12px;
+      border: 1px solid var(--border-2);
+      border-radius: 4px;
+      background: var(--amber-bg);
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity 220ms ease, transform 220ms ease;
+    }
+    .result-row.visible { opacity: 1; transform: translateY(0); }
+    .result-row .result-id   { color: var(--amber); font-weight: 600; font-size: 13px; }
+    .result-row .result-name { color: var(--white); font-size: 13px; }
+
+    /* --------------------------- right panel --------------------------- */
+    .pipeline {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 4px 0;
+      flex: 1;
+      justify-content: flex-start;
+    }
+    .pipe-step {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      padding: 12px 14px;
+      border: 1px solid var(--border-2);
+      border-radius: 4px;
+      background: rgba(10, 69, 53, 0.18);
+      transition:
+        border-color 120ms ease,
+        box-shadow 180ms ease,
+        background 120ms ease,
+        color 120ms ease;
+    }
+    .pipe-step .step-label {
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .pipe-step .step-value {
+      font-size: 14px;
+      color: var(--muted-2);
+      font-variant-numeric: tabular-nums;
+      word-break: break-word;
+    }
+    .pipe-step.active {
+      border-color: var(--mint);
+      background: var(--mint-bg);
+      box-shadow: 0 0 0 1px rgba(22, 208, 152, 0.18), 0 0 24px rgba(22, 208, 152, 0.18);
+    }
+    .pipe-step.active .step-label,
+    .pipe-step.done   .step-label { color: var(--mint); }
+    .pipe-step.active .step-value { color: var(--mint); }
+    .pipe-step.done   .step-value { color: var(--white); }
+    .pipe-step.done {
+      border-color: var(--mint);
+      background: rgba(22, 208, 152, 0.04);
+    }
+    .pipe-arrow {
+      color: var(--muted);
+      text-align: center;
+      font-size: 14px;
+      line-height: 1;
+      user-select: none;
+    }
+
+    /* ------------------------------ timers ------------------------------ */
+    .timer {
+      margin-top: auto;
+      padding-top: 14px;
+      border-top: 1px dashed var(--border-2);
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--muted-2);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: 0.02em;
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+    }
+    .panel-left  .timer.live   { color: var(--amber); }
+    .panel-left  .timer.final  { color: var(--white); }
+    .panel-right .timer.final  { color: var(--white); }
+    .timer .timer-note {
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--muted);
+      letter-spacing: 0.06em;
+    }
+
+    /* ------------------------------ footer ------------------------------ */
+    footer {
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+      color: var(--muted-2);
+      font-size: 12px;
+      line-height: 1.65;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    footer .explainer { margin: 0; max-width: 980px; }
+    footer .explainer .accent { color: var(--text); }
+    footer .attribution { margin: 0; color: var(--muted); }
+    footer .attribution a {
+      color: var(--text);
+      text-decoration: none;
+      border-bottom: 1px dotted var(--muted-2);
+    }
+    footer .attribution a:hover { color: var(--amber); border-bottom-color: var(--amber); }
+
+    /* ----------------------------- utilities ---------------------------- */
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <span class="title">
+      SNOMED CT
+      <span class="slash">//</span>
+      Lookup Benchmark
+      <span class="slash">·</span>
+      <span class="sub">in-memory B-tree vs. compiled perfect hash</span>
+    </span>
+    <div class="controls">
+      <select id="concept-select" aria-label="SNOMED concept"></select>
+      <button id="run-btn" type="button">Run lookup</button>
+    </div>
+  </header>
+
+  <main class="panels">
+
+    <section class="panel panel-left" aria-label="In-memory B-tree lookup">
+      <div class="panel-label">
+        <span>In-Memory B-tree</span>
+        <span class="tag">RAM resident · no network</span>
+      </div>
+
+      <div class="btree-context" id="btree-context">
+        <span class="lead">B-tree pages loaded in RAM</span>
+        <span class="sub" id="btree-query">lookup key: —</span>
+      </div>
+
+      <div class="btree-canvas" id="btree-canvas">
+        <div class="tree-level">
+          <div class="tree-node root" data-node="root">ROOT PAGE</div>
+        </div>
+        <div class="tree-level">
+          <div class="tree-node" data-node="left">branch L</div>
+          <div class="tree-node" data-node="right">branch R</div>
+        </div>
+        <div class="tree-level">
+          <div class="tree-node small" data-node="left-a">L-A</div>
+          <div class="tree-node small" data-node="left-b">L-B</div>
+          <div class="tree-node small" data-node="right-a">R-A</div>
+          <div class="tree-node small" data-node="right-b">R-B</div>
+        </div>
+        <div class="tree-level">
+          <div class="tree-node small" data-node="leaf-0">slot 0</div>
+          <div class="tree-node small" data-node="leaf-1">slot 1</div>
+          <div class="tree-node small" data-node="leaf-2">slot 2</div>
+          <div class="tree-node small" data-node="leaf-3">slot 3</div>
+          <div class="tree-node small" data-node="leaf-4">slot 4</div>
+          <div class="tree-node small" data-node="leaf-5">slot 5</div>
+          <div class="tree-node small" data-node="leaf-6">slot 6</div>
+          <div class="tree-node small" data-node="leaf-7">slot 7</div>
+        </div>
+      </div>
+
+      <div class="traversal" id="traversal"></div>
+
+      <div class="result-row hidden" id="left-result">
+        <span class="result-id"></span>
+        <span class="result-name"></span>
+      </div>
+
+      <div class="timer" id="left-timer">—</div>
+    </section>
+
+    <div class="divider">
+      <div class="ratio-badge" id="ratio-badge">
+        <span id="ratio-value">~150,000×</span>
+        <span class="ratio-sub">faster</span>
+      </div>
+    </div>
+
+    <section class="panel panel-right" aria-label="Compiled perfect hash lookup">
+      <div class="panel-label">
+        <span>Compiled Perfect Hash</span>
+        <span class="tag">embedded · zero I/O</span>
+      </div>
+
+      <div class="pipeline" id="pipeline">
+        <div class="pipe-step" id="step-input">
+          <span class="step-label">input</span>
+          <span class="step-value" id="input-val">—</span>
+        </div>
+        <div class="pipe-arrow">↓</div>
+        <div class="pipe-step" id="step-hash">
+          <span class="step-label">perfect_hash()</span>
+          <span class="step-value" id="hash-val">deterministic slot</span>
+        </div>
+        <div class="pipe-arrow">↓</div>
+        <div class="pipe-step" id="step-offset">
+          <span class="step-label">memory offset</span>
+          <span class="step-value" id="offset-val">—</span>
+        </div>
+        <div class="pipe-arrow">↓</div>
+        <div class="pipe-step" id="step-result">
+          <span class="step-label">result</span>
+          <span class="step-value" id="right-result-val">—</span>
+        </div>
+      </div>
+
+      <div class="timer" id="right-timer">—</div>
+    </section>
+
+  </main>
+
+  <footer>
+    <p class="explainer">
+      Even after data is loaded in memory, a classic B-tree style lookup still walks multiple pages/nodes to locate a term.
+      SNOMED CT is a closed, versioned vocabulary (~360,000 concepts): a <span class="accent">perfect minimal hash</span>
+      compiled per release maps each concept identifier directly to a memory slot.
+      No traversal chain. No comparisons across branches. The structure is rebuilt when a new SNOMED release ships.
+    </p>
+    <p class="attribution">
+      built by <a href="https://linkedin.com/in/debojadebayo" target="_blank" rel="noopener">@debojadebayo</a>
+    </p>
+  </footer>
+
+  <script>
+    'use strict';
+
+    /* --------------------------------- data --------------------------------- */
+
+    const CONCEPTS = [
+      { id: '22298006',  name: 'Myocardial infarction' },
+      { id: '44054006',  name: 'Type 2 diabetes mellitus' },
+      { id: '59621000',  name: 'Essential hypertension' },
+      { id: '195967001', name: 'Asthma' },
+      { id: '49436004',  name: 'Atrial fibrillation' },
+      { id: '91302008',  name: 'Sepsis' },
+      { id: '40095003',  name: 'Acute kidney injury' },
+      { id: '385093006', name: 'Community-acquired pneumonia' },
+    ].map(c => {
+      const n = parseInt(c.id, 10);
+      const offset = '0x' + (n % 0x100000).toString(16).padStart(5, '0');
+      return { ...c, offset };
+    });
+
+    const BTREE_STEPS = [
+      { key: 'root', label: 'root page',   decision: 'compare high-order digits', sim: 8,  real: 260 },
+      { key: 'branch', label: 'branch page', decision: 'follow partition pointer', sim: 14, real: 420 },
+      { key: 'child', label: 'child page', decision: 'narrow to key range', sim: 18, real: 540 },
+      { key: 'leaf', label: 'leaf page', decision: 'locate concept entry slot', sim: 22, real: 680 },
+    ];
+
+    /* ------------------------------- helpers ------------------------------- */
+
+    const $  = (sel, root = document) => root.querySelector(sel);
+    const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
+    const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    function getTraversalPath(conceptId) {
+      const value = parseInt(conceptId, 10);
+      const side = (value % 2 === 0) ? 'left' : 'right';
+      const branch = (value % 4 < 2) ? 'a' : 'b';
+      const leafBase = side === 'left' ? 0 : 4;
+      const leaf = leafBase + (value % 4);
+
+      return {
+        nodes: ['root', side, side + '-' + branch, 'leaf-' + leaf],
+        labels: [
+          'partition by leading digits',
+          side === 'left' ? 'key in left half' : 'key in right half',
+          branch === 'a' ? 'select lower sub-range' : 'select upper sub-range',
+          'slot ' + leaf + ' contains target concept',
+        ],
+      };
+    }
+
+    /* ---------------------------- initialisation ---------------------------- */
+
+    const els = {
+      select:       $('#concept-select'),
+      runBtn:       $('#run-btn'),
+      btreeContext: $('#btree-context'),
+      btreeQuery:   $('#btree-query'),
+      traversal:    $('#traversal'),
+      leftResult:   $('#left-result'),
+      leftResultId: $('#left-result .result-id'),
+      leftResultNm: $('#left-result .result-name'),
+      leftTimer:    $('#left-timer'),
+      ratioBadge:   $('#ratio-badge'),
+      ratioValue:   $('#ratio-value'),
+      treeNodes:    $$('.tree-node'),
+      pipeline:     $('#pipeline'),
+      inputVal:     $('#input-val'),
+      hashVal:      $('#hash-val'),
+      offsetVal:    $('#offset-val'),
+      rightResult:  $('#right-result-val'),
+      rightTimer:   $('#right-timer'),
+      stepInput:    $('#step-input'),
+      stepHash:     $('#step-hash'),
+      stepOffset:   $('#step-offset'),
+      stepResult:   $('#step-result'),
+    };
+
+    function init() {
+      CONCEPTS.forEach((c, i) => {
+        const opt = document.createElement('option');
+        opt.value = String(i);
+        opt.textContent = c.name + '  ·  ' + c.id;
+        els.select.appendChild(opt);
+      });
+
+      BTREE_STEPS.forEach((step, i) => {
+        const row = document.createElement('div');
+        row.className = 'traversal-row';
+        row.dataset.key = step.key;
+        row.innerHTML =
+          '<div class="step-label">step ' + (i + 1) + ' · ' + step.label + '</div>' +
+          '<div class="decision">—</div>' +
+          '<div class="step-time">—</div>';
+        els.traversal.appendChild(row);
+      });
+
+      els.runBtn.addEventListener('click', runLookup);
+    }
+
+    /* --------------------------------- reset -------------------------------- */
+
+    function resetUI() {
+      els.ratioBadge.classList.remove('visible');
+
+      els.btreeContext.classList.remove('visible');
+      els.btreeQuery.textContent = 'lookup key: —';
+
+      $$('.traversal-row', els.traversal).forEach(row => {
+        row.classList.remove('active', 'done');
+        row.querySelector('.decision').textContent = '—';
+        row.querySelector('.step-time').textContent = '—';
+      });
+      els.treeNodes.forEach(node => node.classList.remove('active', 'done'));
+
+      els.leftResult.classList.add('hidden');
+      els.leftResult.classList.remove('visible');
+      els.leftResultId.textContent = '';
+      els.leftResultNm.textContent = '';
+
+      els.leftTimer.textContent = '—';
+      els.leftTimer.classList.remove('live', 'final');
+
+      [els.stepInput, els.stepHash, els.stepOffset, els.stepResult].forEach(el => {
+        el.classList.remove('active', 'done');
+      });
+      els.inputVal.textContent  = '—';
+      els.hashVal.textContent   = 'deterministic slot';
+      els.offsetVal.textContent = '—';
+      els.rightResult.textContent = '—';
+
+      els.rightTimer.textContent = '—';
+      els.rightTimer.classList.remove('final');
+    }
+
+    /* -------------------------------- runLookup ----------------------------- */
+
+    async function runLookup() {
+      const idx = parseInt(els.select.value, 10);
+      const concept = CONCEPTS[idx];
+      if (!concept) return;
+
+      els.runBtn.disabled = true;
+      resetUI();
+
+      // Force a reflow before kicking off transitions so the resets stick.
+      void els.traversal.offsetHeight;
+
+      try {
+        await Promise.all([
+          leftAnimation(concept),
+          rightAnimation(concept),
+        ]);
+        const ratio = Math.round(((els._lastLeftMs || 60) * 1000) / 0.4);
+        els.ratioValue.textContent = '~' + ratio.toLocaleString() + '×';
+        els.ratioBadge.classList.add('visible');
+      } finally {
+        els.runBtn.disabled = false;
+      }
+    }
+
+    /* ------------------------------ left side ------------------------------- */
+
+    async function leftAnimation(concept) {
+      const traversal = getTraversalPath(concept.id);
+      const rows = $$('.traversal-row', els.traversal);
+      const jitter = Math.round((Math.random() * 8) - 4); // -4..+4ms
+      const stepSim = BTREE_STEPS.map((step, idx) => {
+        if (idx !== BTREE_STEPS.length - 1) return step.sim;
+        return Math.max(12, step.sim + jitter);
+      });
+
+      els.btreeQuery.textContent = 'lookup key: ' + concept.id;
+      await new Promise(r => requestAnimationFrame(r));
+      els.btreeContext.classList.add('visible');
+      await sleep(220);
+
+      els.leftTimer.classList.add('live');
+      let cumulativeSim = 0;
+
+      for (let i = 0; i < BTREE_STEPS.length; i++) {
+        const step = BTREE_STEPS[i];
+        const row  = rows[i];
+        const timeCell = row.querySelector('.step-time');
+        const decisionCell = row.querySelector('.decision');
+        const simMs = stepSim[i];
+        const realMs = step.real;
+        const node = $('[data-node="' + traversal.nodes[i] + '"]');
+
+        decisionCell.textContent = traversal.labels[i];
+        row.classList.add('active');
+        if (node) node.classList.add('active');
+
+        const phaseStart = cumulativeSim;
+        const phaseEnd   = cumulativeSim + simMs;
+        const tickStart  = performance.now();
+        let raf;
+        const tick = () => {
+          const elapsed = performance.now() - tickStart;
+          const frac = Math.min(1, elapsed / realMs);
+          const cur = Math.round(phaseStart + frac * (phaseEnd - phaseStart));
+          els.leftTimer.textContent = cur + ' ms';
+          if (frac < 1) raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+
+        await sleep(realMs);
+        cancelAnimationFrame(raf);
+        cumulativeSim = phaseEnd;
+
+        row.classList.remove('active');
+        row.classList.add('done');
+        if (node) {
+          node.classList.remove('active');
+          node.classList.add('done');
+        }
+        timeCell.textContent = simMs + ' ms';
+        els.leftTimer.textContent = cumulativeSim + ' ms';
+      }
+
+      els._lastLeftMs = cumulativeSim;
+      els.leftResultId.textContent = concept.id;
+      els.leftResultNm.textContent = concept.name;
+      els.leftResult.classList.remove('hidden');
+      await new Promise(r => requestAnimationFrame(r));
+      els.leftResult.classList.add('visible');
+
+      els.leftTimer.classList.remove('live');
+      els.leftTimer.classList.add('final');
+      els.leftTimer.innerHTML =
+        cumulativeSim + ' ms <span class="timer-note">· in-memory B-tree traversal</span>';
+    }
+
+    /* ------------------------------ right side ------------------------------ */
+
+    async function rightAnimation(concept) {
+      const STEP_DELAY = 60;
+
+      // step: input
+      els.stepInput.classList.add('active');
+      els.inputVal.textContent = '"' + concept.name + '"';
+      await sleep(STEP_DELAY);
+      els.stepInput.classList.remove('active');
+      els.stepInput.classList.add('done');
+
+      // step: hash
+      els.stepHash.classList.add('active');
+      els.hashVal.textContent = 'computing slot…';
+      await sleep(STEP_DELAY);
+      els.hashVal.textContent = 'slot resolved';
+      els.stepHash.classList.remove('active');
+      els.stepHash.classList.add('done');
+
+      // step: offset
+      els.stepOffset.classList.add('active');
+      els.offsetVal.textContent = concept.offset;
+      await sleep(STEP_DELAY);
+      els.stepOffset.classList.remove('active');
+      els.stepOffset.classList.add('done');
+
+      // step: result
+      els.stepResult.classList.add('active');
+      els.rightResult.textContent = concept.id + '  ' + concept.name;
+      await sleep(STEP_DELAY);
+      els.stepResult.classList.remove('active');
+      els.stepResult.classList.add('done');
+
+      els.rightTimer.classList.add('final');
+      els.rightTimer.innerHTML =
+        '0.4 μs <span class="timer-note">· perfect hash</span>';
+    }
+
+    /* --------------------------------- boot --------------------------------- */
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init);
+    } else {
+      init();
+    }
+  </script>
+
+</body>
+</html>

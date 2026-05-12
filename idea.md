@@ -1,0 +1,7 @@
+Build a single-file index.html demo that visually contrasts two approaches to SNOMED CT concept lookup.
+Left panel — "Traditional" (B+ tree / database): When the user triggers a lookup, animate a step-by-step traversal through visible tree nodes with a realistic cumulative delay (~60-70ms total). Show each node being visited with a highlight animation. Display the final elapsed time in microseconds.
+Right panel — "Compiled Binary" (perfect hash): The same lookup resolves near-instantly (<1μs). No traversal animation — just an immediate result with the timing shown.
+Interaction: Single search input at the top (pre-loaded with a few SNOMED concepts to choose from, e.g. Myocardial infarction, Type 2 diabetes, Hypertension). One "Run lookup" button triggers both panels simultaneously so the contrast is visceral.
+Aesthetic: Clinical but sharp. Dark background, monospace font for timings and node IDs, clean two-column layout. Should feel like a technical tool, not a marketing page. No purple gradients.
+Constraints: Single HTML file, no build step, no external dependencies except a CDN font. Must work when opened directly in a browser offline.
+The goal: A leave-behind link in a cold LinkedIn DM to engineers and clinical informatics leads at health tech vendors. It should make the performance gap immediately obvious to someone technical in under 30 seconds.
