@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=1280" />
   <title>SNOMED CT // Lookup Benchmark</title>
-  <meta name="description" content="A visceral side-by-side of in-memory B-tree traversal vs. compiled perfect-hash SNOMED CT lookup." />
+  <meta name="description" content="A visual side-by-side of terminology server vs in-memory B-tree vs compiled perfect-hash SNOMED CT lookup." />
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -77,7 +77,7 @@
       gap: 12px;
     }
 
-    select#concept-select {
+    select.control-select {
       appearance: none;
       -webkit-appearance: none;
       background: var(--surface);
@@ -96,7 +96,7 @@
       background-repeat: no-repeat;
       min-width: 280px;
     }
-    select#concept-select:focus {
+    select.control-select:focus {
       outline: none;
       border-color: var(--amber);
     }
@@ -212,6 +212,79 @@
     }
 
     /* --------------------------- left panel ---------------------------- */
+    .left-mode-view.hidden { display: none !important; }
+
+    .request-url {
+      background: #07090e;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 10px 12px;
+      color: var(--muted-2);
+      font-size: 12px;
+      white-space: pre;
+      min-height: 70px;
+      overflow-x: auto;
+      opacity: 0;
+      transition: opacity 200ms ease;
+    }
+    .request-url.visible { opacity: 1; }
+    .request-url .verb   { color: var(--amber); font-weight: 600; }
+    .request-url .param  { color: var(--text); }
+    .request-url .val    { color: var(--white); }
+
+    .waterfall {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 4px 0;
+    }
+    .phase-row {
+      display: grid;
+      grid-template-columns: 160px 1fr 64px;
+      align-items: center;
+      gap: 12px;
+      padding: 4px 0;
+    }
+    .phase-row .phase-label {
+      text-align: right;
+      font-size: 12px;
+      color: var(--muted);
+      letter-spacing: 0.02em;
+      transition: color 120ms ease;
+    }
+    .phase-row .bar {
+      position: relative;
+      height: 18px;
+      border-radius: 2px;
+      background: rgba(122, 80, 18, 0.18);
+      overflow: hidden;
+      border: 1px solid transparent;
+      transition: border-color 120ms ease;
+    }
+    .phase-row .bar-fill {
+      position: absolute;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 0%;
+      background: linear-gradient(90deg, var(--amber-dim), var(--amber-bar));
+      transition: width 0s linear;
+      max-width: 100%;
+    }
+    .phase-row .phase-time {
+      font-size: 11px;
+      color: var(--muted);
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+      transition: color 120ms ease;
+    }
+    .phase-row.active .phase-label,
+    .phase-row.done   .phase-label { color: var(--amber); }
+    .phase-row.active .bar,
+    .phase-row.done   .bar { border-color: rgba(245, 165, 36, 0.25); }
+    .phase-row.active .phase-time,
+    .phase-row.done   .phase-time { color: var(--text); }
+
     .btree-context {
       background: #07090e;
       border: 1px solid var(--border);
@@ -428,6 +501,20 @@
     }
     footer .explainer { margin: 0; max-width: 980px; }
     footer .explainer .accent { color: var(--text); }
+    footer .explainer code {
+      font-family: inherit;
+      color: var(--mint);
+      background: rgba(22, 208, 152, 0.08);
+      border: 1px solid rgba(22, 208, 152, 0.18);
+      border-radius: 3px;
+      padding: 0 5px;
+      font-size: 11px;
+    }
+    footer .explainer em {
+      font-style: normal;
+      color: var(--white);
+      letter-spacing: 0.02em;
+    }
     footer .attribution { margin: 0; color: var(--muted); }
     footer .attribution a {
       color: var(--text);
@@ -448,54 +535,65 @@
       <span class="slash">//</span>
       Lookup Benchmark
       <span class="slash">·</span>
-      <span class="sub">in-memory B-tree vs. compiled perfect hash</span>
+      <span class="sub">Terminology server or In-memory B-tree vs. Compiled Perfect Hash</span>
     </span>
     <div class="controls">
-      <select id="concept-select" aria-label="SNOMED concept"></select>
+      <select id="left-mode-select" class="control-select" aria-label="Left panel mode">
+        <option value="server">Terminology server</option>
+        <option value="btree">In-memory B-tree</option>
+      </select>
+      <select id="concept-select" class="control-select" aria-label="SNOMED concept"></select>
       <button id="run-btn" type="button">Run lookup</button>
     </div>
   </header>
 
   <main class="panels">
 
-    <section class="panel panel-left" aria-label="In-memory B-tree lookup">
+    <section class="panel panel-left" aria-label="Left lookup mode">
       <div class="panel-label">
-        <span>In-Memory B-tree</span>
-        <span class="tag">RAM resident · no network</span>
+        <span id="left-mode-title">Terminology Server</span>
+        <span class="tag" id="left-mode-tag">FHIR $lookup · Snowstorm</span>
       </div>
 
-      <div class="btree-context" id="btree-context">
-        <span class="lead">B-tree pages loaded in RAM</span>
-        <span class="sub" id="btree-query">lookup key: —</span>
+      <div id="server-view" class="left-mode-view">
+        <div class="request-url" id="request-url"></div>
+        <div class="waterfall" id="waterfall"></div>
       </div>
 
-      <div class="btree-canvas" id="btree-canvas">
-        <div class="tree-level">
-          <div class="tree-node root" data-node="root">ROOT PAGE</div>
+      <div id="btree-view" class="left-mode-view hidden">
+        <div class="btree-context" id="btree-context">
+          <span class="lead">B-tree pages loaded in RAM</span>
+          <span class="sub" id="btree-query">lookup key: —</span>
         </div>
-        <div class="tree-level">
-          <div class="tree-node" data-node="left">branch L</div>
-          <div class="tree-node" data-node="right">branch R</div>
-        </div>
-        <div class="tree-level">
-          <div class="tree-node small" data-node="left-a">L-A</div>
-          <div class="tree-node small" data-node="left-b">L-B</div>
-          <div class="tree-node small" data-node="right-a">R-A</div>
-          <div class="tree-node small" data-node="right-b">R-B</div>
-        </div>
-        <div class="tree-level">
-          <div class="tree-node small" data-node="leaf-0">slot 0</div>
-          <div class="tree-node small" data-node="leaf-1">slot 1</div>
-          <div class="tree-node small" data-node="leaf-2">slot 2</div>
-          <div class="tree-node small" data-node="leaf-3">slot 3</div>
-          <div class="tree-node small" data-node="leaf-4">slot 4</div>
-          <div class="tree-node small" data-node="leaf-5">slot 5</div>
-          <div class="tree-node small" data-node="leaf-6">slot 6</div>
-          <div class="tree-node small" data-node="leaf-7">slot 7</div>
-        </div>
-      </div>
 
-      <div class="traversal" id="traversal"></div>
+        <div class="btree-canvas" id="btree-canvas">
+          <div class="tree-level">
+            <div class="tree-node root" data-node="root">ROOT PAGE</div>
+          </div>
+          <div class="tree-level">
+            <div class="tree-node" data-node="left">branch L</div>
+            <div class="tree-node" data-node="right">branch R</div>
+          </div>
+          <div class="tree-level">
+            <div class="tree-node small" data-node="left-a">L-A</div>
+            <div class="tree-node small" data-node="left-b">L-B</div>
+            <div class="tree-node small" data-node="right-a">R-A</div>
+            <div class="tree-node small" data-node="right-b">R-B</div>
+          </div>
+          <div class="tree-level">
+            <div class="tree-node small" data-node="leaf-0">slot 0</div>
+            <div class="tree-node small" data-node="leaf-1">slot 1</div>
+            <div class="tree-node small" data-node="leaf-2">slot 2</div>
+            <div class="tree-node small" data-node="leaf-3">slot 3</div>
+            <div class="tree-node small" data-node="leaf-4">slot 4</div>
+            <div class="tree-node small" data-node="leaf-5">slot 5</div>
+            <div class="tree-node small" data-node="leaf-6">slot 6</div>
+            <div class="tree-node small" data-node="leaf-7">slot 7</div>
+          </div>
+        </div>
+
+        <div class="traversal" id="traversal"></div>
+      </div>
 
       <div class="result-row hidden" id="left-result">
         <span class="result-id"></span>
@@ -547,10 +645,10 @@
 
   <footer>
     <p class="explainer">
-      Even after data is loaded in memory, a classic B-tree style lookup still walks multiple pages/nodes to locate a term.
-      SNOMED CT is a closed, versioned vocabulary (~360,000 concepts): a <span class="accent">perfect minimal hash</span>
-      compiled per release maps each concept identifier directly to a memory slot.
-      No traversal chain. No comparisons across branches. The structure is rebuilt when a new SNOMED release ships.
+      You can toggle the left panel between a terminology server API lookup and an in-memory B-tree traversal.
+      Even after data is loaded in memory, a classic B-tree style lookup still walks multiple pages/nodes to locate a term — each step is a comparison and a pointer chase.
+      A <span class="accent"> perfect hash function (PHF)</span> sidesteps that entirely: the concept ID is hashed into a slot index in <em>O(1)</em>, and the value is fetched as a direct <span class="accent">array lookup</span>.
+      SNOMED CT is a closed, versioned vocabulary (~360,000 concepts), so the PHF is compiled once per release and rebuilt when a new SNOMED release ships.
     </p>
     <p class="attribution">
       built by <a href="https://linkedin.com/in/debojadebayo" target="_blank" rel="noopener">@debojadebayo</a>
@@ -577,11 +675,21 @@
       return { ...c, offset };
     });
 
+    const SERVER_PHASES = [
+      { key: 'dns',      label: 'dns lookup',       simMs: 2,  real: 200 },
+      { key: 'tcp',      label: 'tcp connect',      simMs: 2,  real: 170 },
+      { key: 'tls',      label: 'tls handshake',    simMs: 4,  real: 260 },
+      { key: 'req',      label: 'request sent',     simMs: 2,  real: 170 },
+      { key: 'ttfb',     label: 'waiting (ttfb)',   simMs: 47, real: 1200 },
+      { key: 'download', label: 'content download', simMs: 3,  real: 300 },
+    ];
+    const SERVER_TOTAL_MS = SERVER_PHASES.reduce((acc, phase) => acc + phase.simMs, 0); // 60
+
     const BTREE_STEPS = [
-      { key: 'root', label: 'root page',   decision: 'compare high-order digits', sim: 8,  real: 260 },
-      { key: 'branch', label: 'branch page', decision: 'follow partition pointer', sim: 14, real: 420 },
-      { key: 'child', label: 'child page', decision: 'narrow to key range', sim: 18, real: 540 },
-      { key: 'leaf', label: 'leaf page', decision: 'locate concept entry slot', sim: 22, real: 680 },
+      { key: 'root',   label: 'root page',   simUs: 14, real: 180 },
+      { key: 'branch', label: 'branch page', simUs: 17, real: 180 },
+      { key: 'child',  label: 'child page',  simUs: 19, real: 180 },
+      { key: 'leaf',   label: 'leaf page',   simUs: 20, real: 180 },
     ];
 
     /* ------------------------------- helpers ------------------------------- */
@@ -589,6 +697,14 @@
     const $  = (sel, root = document) => root.querySelector(sel);
     const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
     const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+    function buildRequestUrlHTML(conceptId) {
+      return (
+        '<span class="verb">GET</span> /fhir/CodeSystem/$lookup\n' +
+        '   <span class="param">?system=</span><span class="val">http://snomed.info/sct</span>\n' +
+        '   <span class="param">&amp;code=</span><span class="val">' + conceptId + '</span>'
+      );
+    }
 
     function getTraversalPath(conceptId) {
       const value = parseInt(conceptId, 10);
@@ -611,8 +727,15 @@
     /* ---------------------------- initialisation ---------------------------- */
 
     const els = {
+      modeSelect:   $('#left-mode-select'),
       select:       $('#concept-select'),
       runBtn:       $('#run-btn'),
+      leftModeTitle: $('#left-mode-title'),
+      leftModeTag:   $('#left-mode-tag'),
+      serverView:   $('#server-view'),
+      requestUrl:   $('#request-url'),
+      waterfall:    $('#waterfall'),
+      btreeView:    $('#btree-view'),
       btreeContext: $('#btree-context'),
       btreeQuery:   $('#btree-query'),
       traversal:    $('#traversal'),
@@ -643,6 +766,19 @@
         els.select.appendChild(opt);
       });
 
+      SERVER_PHASES.forEach(phase => {
+        const widthPct = (phase.simMs / SERVER_TOTAL_MS) * 100;
+        const row = document.createElement('div');
+        row.className = 'phase-row';
+        row.dataset.key = phase.key;
+        row.dataset.width = widthPct.toFixed(2);
+        row.innerHTML =
+          '<div class="phase-label">' + phase.label + '</div>' +
+          '<div class="bar"><div class="bar-fill"></div></div>' +
+          '<div class="phase-time">—</div>';
+        els.waterfall.appendChild(row);
+      });
+
       BTREE_STEPS.forEach((step, i) => {
         const row = document.createElement('div');
         row.className = 'traversal-row';
@@ -654,13 +790,36 @@
         els.traversal.appendChild(row);
       });
 
+      els.modeSelect.addEventListener('change', () => {
+        setLeftMode(els.modeSelect.value);
+        resetUI();
+      });
       els.runBtn.addEventListener('click', runLookup);
+      setLeftMode(els.modeSelect.value);
+    }
+
+    function setLeftMode(mode) {
+      const isServer = mode === 'server';
+      els.leftModeTitle.textContent = isServer ? 'Terminology Server' : 'In-Memory B-tree';
+      els.leftModeTag.textContent = isServer ? 'FHIR $lookup · Snowstorm' : 'RAM resident · no network';
+      els.serverView.classList.toggle('hidden', !isServer);
+      els.btreeView.classList.toggle('hidden', isServer);
     }
 
     /* --------------------------------- reset -------------------------------- */
 
     function resetUI() {
       els.ratioBadge.classList.remove('visible');
+
+      els.requestUrl.classList.remove('visible');
+      els.requestUrl.innerHTML = '';
+      $$('.phase-row', els.waterfall).forEach(row => {
+        row.classList.remove('active', 'done');
+        const fill = row.querySelector('.bar-fill');
+        fill.style.transition = 'width 0s linear';
+        fill.style.width = '0%';
+        row.querySelector('.phase-time').textContent = '—';
+      });
 
       els.btreeContext.classList.remove('visible');
       els.btreeQuery.textContent = 'lookup key: —';
@@ -679,6 +838,7 @@
 
       els.leftTimer.textContent = '—';
       els.leftTimer.classList.remove('live', 'final');
+      els._lastLeftUs = 60000;
 
       [els.stepInput, els.stepHash, els.stepOffset, els.stepResult].forEach(el => {
         el.classList.remove('active', 'done');
@@ -696,21 +856,24 @@
 
     async function runLookup() {
       const idx = parseInt(els.select.value, 10);
+      const mode = els.modeSelect.value;
       const concept = CONCEPTS[idx];
       if (!concept) return;
 
       els.runBtn.disabled = true;
+      setLeftMode(mode);
       resetUI();
 
       // Force a reflow before kicking off transitions so the resets stick.
+      void els.serverView.offsetHeight;
       void els.traversal.offsetHeight;
 
       try {
         await Promise.all([
-          leftAnimation(concept),
+          leftAnimation(concept, mode),
           rightAnimation(concept),
         ]);
-        const ratio = Math.round(((els._lastLeftMs || 60) * 1000) / 0.4);
+        const ratio = Math.round((els._lastLeftUs || 60000) / 0.4);
         els.ratioValue.textContent = '~' + ratio.toLocaleString() + '×';
         els.ratioBadge.classList.add('visible');
       } finally {
@@ -720,39 +883,41 @@
 
     /* ------------------------------ left side ------------------------------- */
 
-    async function leftAnimation(concept) {
-      const traversal = getTraversalPath(concept.id);
-      const rows = $$('.traversal-row', els.traversal);
-      const jitter = Math.round((Math.random() * 8) - 4); // -4..+4ms
-      const stepSim = BTREE_STEPS.map((step, idx) => {
-        if (idx !== BTREE_STEPS.length - 1) return step.sim;
-        return Math.max(12, step.sim + jitter);
-      });
+    async function leftAnimation(concept, mode) {
+      if (mode === 'server') {
+        return leftServerAnimation(concept);
+      }
+      return leftBtreeAnimation(concept);
+    }
 
-      els.btreeQuery.textContent = 'lookup key: ' + concept.id;
+    async function leftServerAnimation(concept) {
+      const rows = $$('.phase-row', els.waterfall);
+
+      els.requestUrl.innerHTML = buildRequestUrlHTML(concept.id);
       await new Promise(r => requestAnimationFrame(r));
-      els.btreeContext.classList.add('visible');
+      els.requestUrl.classList.add('visible');
       await sleep(220);
 
       els.leftTimer.classList.add('live');
-      let cumulativeSim = 0;
+      let cumulativeMs = 0;
 
-      for (let i = 0; i < BTREE_STEPS.length; i++) {
-        const step = BTREE_STEPS[i];
-        const row  = rows[i];
-        const timeCell = row.querySelector('.step-time');
-        const decisionCell = row.querySelector('.decision');
-        const simMs = stepSim[i];
-        const realMs = step.real;
-        const node = $('[data-node="' + traversal.nodes[i] + '"]');
+      for (let i = 0; i < SERVER_PHASES.length; i++) {
+        const phase = SERVER_PHASES[i];
+        const row = rows[i];
+        const fill = row.querySelector('.bar-fill');
+        const timeCell = row.querySelector('.phase-time');
+        const simMs = phase.simMs;
+        const realMs = phase.real;
+        const widthPc = parseFloat(row.dataset.width);
 
-        decisionCell.textContent = traversal.labels[i];
         row.classList.add('active');
-        if (node) node.classList.add('active');
+        fill.style.transition = 'width ' + realMs + 'ms cubic-bezier(0.25, 0.7, 0.3, 1)';
+        await new Promise(r => requestAnimationFrame(r));
+        fill.style.width = widthPc + '%';
 
-        const phaseStart = cumulativeSim;
-        const phaseEnd   = cumulativeSim + simMs;
-        const tickStart  = performance.now();
+        const phaseStart = cumulativeMs;
+        const phaseEnd = cumulativeMs + simMs;
+        const tickStart = performance.now();
         let raf;
         const tick = () => {
           const elapsed = performance.now() - tickStart;
@@ -765,19 +930,15 @@
 
         await sleep(realMs);
         cancelAnimationFrame(raf);
-        cumulativeSim = phaseEnd;
+        cumulativeMs = phaseEnd;
 
         row.classList.remove('active');
         row.classList.add('done');
-        if (node) {
-          node.classList.remove('active');
-          node.classList.add('done');
-        }
         timeCell.textContent = simMs + ' ms';
-        els.leftTimer.textContent = cumulativeSim + ' ms';
+        els.leftTimer.textContent = cumulativeMs + ' ms';
       }
 
-      els._lastLeftMs = cumulativeSim;
+      els._lastLeftUs = cumulativeMs * 1000;
       els.leftResultId.textContent = concept.id;
       els.leftResultNm.textContent = concept.name;
       els.leftResult.classList.remove('hidden');
@@ -787,7 +948,76 @@
       els.leftTimer.classList.remove('live');
       els.leftTimer.classList.add('final');
       els.leftTimer.innerHTML =
-        cumulativeSim + ' ms <span class="timer-note">· in-memory B-tree traversal</span>';
+        cumulativeMs + ' ms <span class="timer-note">· terminology server round-trip</span>';
+    }
+
+    async function leftBtreeAnimation(concept) {
+      const traversal = getTraversalPath(concept.id);
+      const rows = $$('.traversal-row', els.traversal);
+      const stepUs = BTREE_STEPS.map((step, idx) => {
+        if (idx !== BTREE_STEPS.length - 1) return step.simUs;
+        return step.simUs;
+      });
+
+      els.btreeQuery.textContent = 'lookup key: ' + concept.id;
+      await new Promise(r => requestAnimationFrame(r));
+      els.btreeContext.classList.add('visible');
+      await sleep(160);
+
+      els.leftTimer.classList.add('live');
+      let cumulativeUs = 0;
+
+      for (let i = 0; i < BTREE_STEPS.length; i++) {
+        const step = BTREE_STEPS[i];
+        const row  = rows[i];
+        const timeCell = row.querySelector('.step-time');
+        const decisionCell = row.querySelector('.decision');
+        const simUs = stepUs[i];
+        const realMs = step.real;
+        const node = $('[data-node="' + traversal.nodes[i] + '"]');
+
+        decisionCell.textContent = traversal.labels[i];
+        row.classList.add('active');
+        if (node) node.classList.add('active');
+
+        const phaseStart = cumulativeUs;
+        const phaseEnd   = cumulativeUs + simUs;
+        const tickStart  = performance.now();
+        let raf;
+        const tick = () => {
+          const elapsed = performance.now() - tickStart;
+          const frac = Math.min(1, elapsed / realMs);
+          const cur = Math.round(phaseStart + frac * (phaseEnd - phaseStart));
+          els.leftTimer.textContent = cur + ' μs';
+          if (frac < 1) raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+
+        await sleep(realMs);
+        cancelAnimationFrame(raf);
+        cumulativeUs = phaseEnd;
+
+        row.classList.remove('active');
+        row.classList.add('done');
+        if (node) {
+          node.classList.remove('active');
+          node.classList.add('done');
+        }
+        timeCell.textContent = simUs + ' μs';
+        els.leftTimer.textContent = cumulativeUs + ' μs';
+      }
+
+      els._lastLeftUs = cumulativeUs;
+      els.leftResultId.textContent = concept.id;
+      els.leftResultNm.textContent = concept.name;
+      els.leftResult.classList.remove('hidden');
+      await new Promise(r => requestAnimationFrame(r));
+      els.leftResult.classList.add('visible');
+
+      els.leftTimer.classList.remove('live');
+      els.leftTimer.classList.add('final');
+      els.leftTimer.innerHTML =
+        cumulativeUs + ' μs <span class="timer-note">· in-memory B-tree lookup</span>';
     }
 
     /* ------------------------------ right side ------------------------------ */
